@@ -12,11 +12,12 @@ Web UI + API. Async jobs in Postgres. PDFs stored on disk — no external SaaS r
 cp .env.example .env.local
 docker compose up -d
 npm install
-npm run dev      # terminal 1
-npm run worker   # terminal 2
+npm run dev:all   # Next.js + worker in one terminal
 ```
 
-Open [http://localhost:3000](http://localhost:3000) and click **Convert to PDF**.
+Open [http://localhost:3000](http://localhost:3000), tune export options, preview your document, and click **Export PDF**.
+
+Or run app and worker separately: `npm run dev` (terminal 1) and `npm run worker` (terminal 2).
 
 ---
 
@@ -45,16 +46,16 @@ This is not a WYSIWYG editor or a hosted document service. It is a small pipelin
 cp .env.example .env.local
 docker compose up -d
 npm install
-npm run dev
-npm run worker
+npm run dev:all
 ```
 
 1. Open [http://localhost:3000](http://localhost:3000)
 2. Paste Markdown or drop a `.md` file
-3. Click **Convert to PDF**
-4. Download when status shows **Ready**
+3. Pick a theme, paper size, margins, and optional page numbers
+4. Check the live preview panel
+5. Click **Export PDF** and download when status shows **Ready**
 
-The worker must be running — without it, jobs stay queued.
+The worker must be running — `npm run dev:all` starts it automatically.
 
 ## How it works
 
@@ -85,10 +86,18 @@ HTML is sanitized before rendering. CSS is embedded — PDF output does not depe
 ## Example flow
 
 ```bash
-# Create a job
+# Create a job with export options
 curl -s -X POST http://localhost:3000/api/jobs \
   -H 'Content-Type: application/json' \
-  -d '{"markdown":"# Hello\n\n| A | B |\n|---|---|\n| 1 | 2 |"}'
+  -d '{"markdown":"# Hello\n\n| A | B |\n|---|---|\n| 1 | 2 |","options":{"theme":"docs","paperSize":"a4","marginPreset":"default","showPageNumbers":true}}'
+
+# Preview without creating a job
+curl -s -X POST http://localhost:3000/api/preview \
+  -H 'Content-Type: application/json' \
+  -d '{"markdown":"# Preview","options":{"theme":"minimal"}}'
+
+# List recent jobs
+curl -s http://localhost:3000/api/jobs?limit=10
 
 # Poll status (replace <id> with the returned job id)
 curl -s http://localhost:3000/api/jobs/<id>
@@ -98,8 +107,10 @@ curl -o out.pdf http://localhost:3000/api/jobs/<id>/download
 ```
 
 ```
+POST /api/preview       →  { "html": "…" }
 POST /api/jobs          →  { "id": "…" }
-GET  /api/jobs/:id      →  { "status": "completed", "downloadUrl": "…" }
+GET  /api/jobs          →  { "jobs": [ … ] }
+GET  /api/jobs/:id      →  { "status": "completed", "downloadUrl": "…", "options": { … } }
 GET  /api/jobs/:id/download  →  PDF bytes
 ```
 
@@ -117,8 +128,11 @@ GET  /api/jobs/:id/download  →  PDF bytes
 
 **Today**
 
-* Web UI with paste, file upload, and status polling
-* REST API for create, status, and download
+* Web UI with paste, file upload, drag-and-drop, and status polling
+* **Live preview** — side-by-side editor and server-rendered HTML preview
+* **Export options** — theme (default / minimal / docs), A4 or Letter, margin presets, page numbers
+* **Job history** — recent exports with re-download
+* REST API for create, preview, list, status, and download
 * GFM rendering (tables, task lists, code fences)
 * Sanitized HTML + embedded print CSS
 * Gotenberg 8 Chromium PDF generation
@@ -178,6 +192,15 @@ Copy `.env.example` to `.env.local`. The worker loads `.env.local` first, then `
 | `PDF_STORAGE_PATH` | `./data/pdfs` | Where completed PDFs are stored (created automatically) |
 | `DOCUMENT_LOCALE` | `en` | BCP 47 tag for CSS hyphenation |
 
+Job `options` (JSON) accepted by `POST /api/jobs` and `POST /api/preview`:
+
+| Field | Values | Default |
+| ----- | ------ | ------- |
+| `theme` | `default`, `minimal`, `docs` | `default` |
+| `paperSize` | `a4`, `letter` | `a4` |
+| `marginPreset` | `narrow` (8 mm), `default` (12 mm), `wide` (20 mm) | `default` |
+| `showPageNumbers` | `true` / `false` | `false` |
+
 **Secrets are never committed.** Keep credentials in `.env.local` (gitignored).
 
 `docker compose` provisions Postgres and Gotenberg with defaults that match `.env.example`:
@@ -203,8 +226,8 @@ Docker is required for local infrastructure. The app and worker run on the host 
 cp .env.example .env.local
 docker compose up -d                  # Postgres + Gotenberg
 npm install
-npm run dev                           # terminal 1 — http://localhost:3000
-npm run worker                        # terminal 2 — processes queued jobs
+npm run dev:all                       # Next.js + worker (recommended)
+# or: npm run dev + npm run worker in separate terminals
 ```
 
 **Quick verification**
@@ -233,7 +256,8 @@ npm run worker   # terminal 2
 | Command | What it does |
 | ------- | ------------ |
 | `npm run dev` | Next.js development server |
-| `npm run worker` | Background job processor (required for conversions) |
+| `npm run dev:all` | Next.js + worker together (recommended for local dev) |
+| `npm run worker` | Background job processor |
 | `npm run build` | Production build |
 | `npm run start` | Production server (run `build` first) |
 | `npm run lint` | ESLint |
@@ -251,18 +275,19 @@ npm run worker   # terminal 2
 ```
 src/
   app/
-    api/jobs/           REST API (create, status, download)
+    api/jobs/           REST API (create, list, status, download)
+    api/preview/        Live HTML preview (no job created)
     page.tsx            Home UI
   components/
-    job-console.tsx     Paste/upload, poll, download
+    job-console.tsx     Editor, preview, export, status
+    export-options-panel.tsx
+    markdown-preview.tsx
+    job-history.tsx
   lib/
+    export-options.ts   Theme, paper, margin, page number types
     db/                 Postgres pool, migrations, job queries
-    md/                 Markdown render + print CSS
+    md/themes/          Print CSS themes (default, minimal, docs)
     gotenberg.ts        HTML → PDF client
-    paths.ts            PDF storage paths
-scripts/
-  worker.ts             Job polling and conversion loop
-docker-compose.yml      Postgres + Gotenberg
 ```
 
 ## Foundation

@@ -1,15 +1,20 @@
-/**
- * Print-first CSS for Chromium: tables, word breaking, code blocks, and A4 page model.
- * Embedded in the HTML sent to Gotenberg so output does not depend on external assets.
- */
-export const PRINT_THEME_CSS = `
-:root {
-  color-scheme: light;
-}
+import type { ExportOptions, MarginPreset, PaperSize } from "@/lib/export-options";
+import { marginPresetToMm } from "@/lib/export-options";
 
+/**
+ * Shared print CSS: page model, typography baseline, and element rules common to all themes.
+ *
+ * @param options - Export options controlling page size and margins.
+ * @returns CSS string.
+ */
+export function buildBasePrintCss(options: ExportOptions): string {
+  const marginMm = marginPresetToMm(options.marginPreset);
+  const pageSize = options.paperSize === "letter" ? "letter" : "A4";
+
+  return `
 @page {
-  size: A4;
-  margin: 12mm;
+  size: ${pageSize};
+  margin: ${marginMm}mm;
 }
 
 html {
@@ -18,10 +23,8 @@ html {
 }
 
 body {
-  font-family: system-ui, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   font-size: 11pt;
   line-height: 1.45;
-  color: #111;
   hyphenate-character: "-";
   hyphens: auto;
 }
@@ -44,7 +47,6 @@ dt {
 }
 
 a {
-  color: inherit;
   text-decoration: underline;
   overflow-wrap: anywhere;
 }
@@ -56,10 +58,6 @@ pre {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   word-break: break-word;
-  border: 1px solid #ddd;
-  background: #f7f7f7;
-  padding: 8px 10px;
-  border-radius: 4px;
   page-break-inside: avoid;
   break-inside: avoid;
 }
@@ -72,14 +70,6 @@ code {
 
 pre code {
   font-size: inherit;
-  overflow-wrap: anywhere;
-}
-
-blockquote {
-  margin: 0.8em 0;
-  padding-left: 12px;
-  border-left: 3px solid #ccc;
-  color: #333;
 }
 
 table {
@@ -100,17 +90,11 @@ tr {
 
 th,
 td {
-  border: 1px solid #ccc;
   padding: 6px 8px;
   vertical-align: top;
   overflow-wrap: anywhere;
   word-break: normal;
   hyphens: auto;
-}
-
-th {
-  background: #f2f2f2;
-  font-weight: 600;
 }
 
 ul,
@@ -124,7 +108,6 @@ ol {
 
 hr {
   border: none;
-  border-top: 1px solid #ddd;
   margin: 1em 0;
 }
 
@@ -133,3 +116,31 @@ img {
   height: auto;
 }
 `;
+}
+
+/**
+ * Human-readable label for a margin preset (UI).
+ *
+ * @param preset - Margin preset id.
+ * @returns Display label.
+ */
+export function marginPresetLabel(preset: MarginPreset): string {
+  switch (preset) {
+    case "narrow":
+      return "Narrow (8 mm)";
+    case "wide":
+      return "Wide (20 mm)";
+    default:
+      return "Default (12 mm)";
+  }
+}
+
+/**
+ * Human-readable label for a paper size (UI).
+ *
+ * @param paperSize - Paper size id.
+ * @returns Display label.
+ */
+export function paperSizeLabel(paperSize: PaperSize): string {
+  return paperSize === "letter" ? "US Letter" : "A4";
+}

@@ -2,6 +2,20 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { DEFAULT_EXPORT_OPTIONS, ExportOptionsPanel } from "@/components/export-options-panel";
+import {
+  DownloadIcon,
+  EyeIcon,
+  FileIcon,
+  PencilIcon,
+  SpinnerIcon,
+  UploadIcon,
+  ColumnsIcon,
+} from "@/components/icons";
+import { JobHistory } from "@/components/job-history";
+import { MarkdownPreview } from "@/components/markdown-preview";
+import type { ExportOptions } from "@/lib/export-options";
+
 interface JobStatusPayload {
   readonly id: string;
   readonly status: string;
@@ -71,39 +85,41 @@ function formatStatusLabel(status: string | null): string {
   }
   switch (status) {
     case "pending":
-      return "Queued";
+      return "Queued — waiting for worker";
     case "running":
-      return "Generating PDF";
+      return "Generating your PDF…";
     case "completed":
-      return "Ready";
+      return "PDF ready to download";
     case "failed":
-      return "Something went wrong";
+      return "Export failed";
     default:
       return status;
   }
 }
 
-function statusDotClass(status: string | null): string {
+function statusAccentClass(status: string | null): string {
   switch (status) {
     case "pending":
-      return "bg-amber-400";
+      return "border-warning/30 bg-warning/10";
     case "running":
-      return "bg-sky-500 motion-safe:animate-pulse";
+      return "border-foreground/20 bg-foreground/5";
     case "completed":
-      return "bg-emerald-500";
+      return "border-success/30 bg-success/10";
     case "failed":
-      return "bg-red-500";
+      return "border-danger/30 bg-danger/10";
     default:
-      return "bg-zinc-300 dark:bg-zinc-600";
+      return "border-border-subtle bg-surface-muted/40";
   }
 }
 
 /**
- * Primary workspace: load Markdown from paste, upload, or drag-and-drop, then convert to PDF.
+ * Primary workspace: editor, live preview, export options, and job history.
  */
 export function JobConsole(): React.ReactElement {
   const [markdown, setMarkdown] = useState(sampleMarkdown);
   const [loadedFileName, setLoadedFileName] = useState<string | null>(null);
+  const [exportOptions, setExportOptions] = useState<ExportOptions>(DEFAULT_EXPORT_OPTIONS);
+  const [activePane, setActivePane] = useState<"edit" | "preview" | "split">("edit");
   const [jobId, setJobId] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -111,9 +127,12 @@ export function JobConsole(): React.ReactElement {
   const [busy, setBusy] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [fileHint, setFileHint] = useState<string | null>(null);
+  const [historyRefreshKey, setHistoryRefreshKey] = useState(0);
   const pollRef = useRef<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dragDepthRef = useRef(0);
+
+  const charCount = markdown.length;
 
   const stopPolling = useCallback(() => {
     if (pollRef.current !== null) {
@@ -142,6 +161,7 @@ export function JobConsole(): React.ReactElement {
       if (payload.status === "completed" || payload.status === "failed") {
         stopPolling();
         setBusy(false);
+        setHistoryRefreshKey((k) => k + 1);
       }
     },
     [stopPolling],
@@ -187,7 +207,7 @@ export function JobConsole(): React.ReactElement {
     const res = await fetch("/api/jobs", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ markdown }),
+      body: JSON.stringify({ markdown, options: exportOptions }),
     });
 
     const json: unknown = await res.json();
@@ -210,6 +230,7 @@ export function JobConsole(): React.ReactElement {
 
     setJobId(id);
     setStatus("pending");
+    setHistoryRefreshKey((k) => k + 1);
 
     pollRef.current = window.setInterval(() => {
       pollJob(id).catch((err: unknown) => {
@@ -227,197 +248,252 @@ export function JobConsole(): React.ReactElement {
   }
 
   return (
-    <div className="flex w-full max-w-3xl flex-col gap-8">
-      <section
-        className={`relative overflow-hidden rounded-2xl border transition-colors ${
-          isDragging
-            ? "border-sky-400 bg-sky-50/80 ring-2 ring-sky-300/60 dark:border-sky-500 dark:bg-sky-950/40 dark:ring-sky-600/50"
-            : "border-zinc-200/80 bg-white dark:border-zinc-800 dark:bg-zinc-950/60"
-        }`}
-        onDragEnter={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          dragDepthRef.current += 1;
-          setIsDragging(true);
-        }}
-        onDragLeave={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          dragDepthRef.current -= 1;
-          if (dragDepthRef.current <= 0) {
-            dragDepthRef.current = 0;
-            setIsDragging(false);
-          }
-        }}
-        onDragOver={(e) => {
-          e.preventDefault();
-          e.dataTransfer.dropEffect = "copy";
-        }}
-        onDrop={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          dragDepthRef.current = 0;
-          setIsDragging(false);
-          void handleFiles(e.dataTransfer.files);
-        }}
-      >
-        <div className="flex flex-col gap-4 p-6 sm:p-8">
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-            <div>
-              <h2 className="text-base font-semibold text-zinc-900 dark:text-zinc-50">Your document</h2>
-              <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-                Paste Markdown below, or drop a <span className="font-medium text-zinc-700 dark:text-zinc-300">.md</span> file anywhere in this
-                area.
-              </p>
-            </div>
-            <div className="flex shrink-0 flex-wrap gap-2">
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept=".md,.markdown,text/markdown"
-                className="sr-only"
-                aria-label="Upload Markdown file"
-                onChange={(e) => {
-                  const files = e.target.files;
-                  if (files?.length) {
-                    void handleFiles(files);
-                  }
-                  e.target.value = "";
-                }}
-              />
-              <button
-                type="button"
-                onClick={() => fileInputRef.current?.click()}
-                className="inline-flex items-center justify-center gap-2 rounded-xl border border-zinc-200 bg-white px-4 py-2.5 text-sm font-medium text-zinc-800 shadow-sm transition hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
-              >
-                <UploadIcon className="h-4 w-4 opacity-70" aria-hidden />
-                Upload file
-              </button>
-            </div>
+    <div className="flex w-full flex-col gap-6">
+      <ExportOptionsPanel options={exportOptions} onChange={setExportOptions} disabled={busy} />
+
+      <div className="card-elevated overflow-hidden">
+        {/* Workspace toolbar */}
+        <div className="flex flex-col gap-3 border-b border-border-subtle bg-surface-muted/40 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-5">
+          <div className="inline-flex rounded-lg border border-border-subtle bg-surface p-1" role="tablist" aria-label="Editor or preview">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activePane === "edit"}
+              onClick={() => {
+                setActivePane("edit");
+              }}
+              className={`inline-flex cursor-pointer items-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-colors duration-150 ${
+                activePane === "edit" ? "tab-active shadow-sm" : "text-text-secondary hover:bg-surface-muted hover:text-foreground"
+              }`}
+            >
+              <PencilIcon className="h-4 w-4" aria-hidden />
+              Edit
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activePane === "preview"}
+              onClick={() => {
+                setActivePane("preview");
+              }}
+              className={`inline-flex cursor-pointer items-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-colors duration-150 ${
+                activePane === "preview" ? "tab-active shadow-sm" : "text-text-secondary hover:bg-surface-muted hover:text-foreground"
+              }`}
+            >
+              <EyeIcon className="h-4 w-4" aria-hidden />
+              Preview
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activePane === "split"}
+              onClick={() => {
+                setActivePane("split");
+              }}
+              className={`hidden cursor-pointer items-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-colors duration-150 lg:inline-flex ${
+                activePane === "split" ? "tab-active shadow-sm" : "text-text-secondary hover:bg-surface-muted hover:text-foreground"
+              }`}
+            >
+              <ColumnsIcon className="h-4 w-4" aria-hidden />
+              Split
+            </button>
           </div>
 
-          {loadedFileName ? (
-            <div className="flex flex-wrap items-center gap-2 text-sm text-zinc-600 dark:text-zinc-300">
-              <span className="inline-flex items-center gap-1.5 rounded-full bg-zinc-100 px-3 py-1 font-medium text-zinc-800 dark:bg-zinc-800 dark:text-zinc-100">
-                <FileIcon className="h-3.5 w-3.5 opacity-70" aria-hidden />
-                {loadedFileName}
-              </span>
-              <button
-                type="button"
-                className="text-sm font-medium text-sky-700 underline-offset-4 hover:underline dark:text-sky-400"
-                onClick={() => {
-                  setLoadedFileName(null);
-                }}
-              >
-                Remove
-              </button>
-            </div>
-          ) : null}
-
-          {fileHint ? (
-            <p className="text-sm text-amber-800 dark:text-amber-200" role="status">
-              {fileHint}
-            </p>
-          ) : null}
-
-          <label htmlFor="md" className="sr-only">
-            Markdown source
-          </label>
-          <textarea
-            id="md"
-            className="min-h-[280px] w-full resize-y rounded-xl border border-zinc-200 bg-zinc-50/80 p-4 font-mono text-[13px] leading-relaxed text-zinc-900 shadow-inner outline-none ring-zinc-300/80 transition focus:border-sky-400 focus:bg-white focus:ring-2 focus:ring-sky-400/30 dark:border-zinc-700 dark:bg-zinc-900/80 dark:text-zinc-50 dark:focus:border-sky-500 dark:focus:bg-zinc-950 dark:focus:ring-sky-500/25"
-            value={markdown}
-            onChange={(e) => {
-              setMarkdown(e.target.value);
-              setLoadedFileName(null);
-              setFileHint(null);
-            }}
-            spellCheck={false}
-            placeholder="Write or paste Markdown here…"
-          />
+          <div className="flex items-center gap-2">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".md,.markdown,text/markdown"
+              className="sr-only"
+              aria-label="Upload Markdown file"
+              onChange={(e) => {
+                const files = e.target.files;
+                if (files?.length) {
+                  void handleFiles(files);
+                }
+                e.target.value = "";
+              }}
+            />
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              className="btn-secondary px-3 py-2 text-sm"
+            >
+              <UploadIcon className="h-4 w-4" aria-hidden />
+              Upload
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                void onSubmit();
+              }}
+              disabled={busy || markdown.trim().length === 0}
+              className="btn-primary px-5 py-2.5 text-sm"
+            >
+              {busy ? (
+                <>
+                  <SpinnerIcon className="h-4 w-4 motion-safe:animate-spin" />
+                  Exporting…
+                </>
+              ) : (
+                "Export PDF"
+              )}
+            </button>
+          </div>
         </div>
-      </section>
 
-      <div>
-        <button
-          type="button"
-          onClick={() => {
-            void onSubmit();
-          }}
-          disabled={busy || markdown.trim().length === 0}
-          className="inline-flex w-full items-center justify-center rounded-xl bg-zinc-900 px-6 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-white"
-        >
-          {busy ? (
-            <span className="inline-flex items-center gap-2">
-              <Spinner />
-              Working…
-            </span>
-          ) : (
-            "Export PDF"
-          )}
-        </button>
+        {/* Editor / Preview panes */}
+        <div className={`grid ${activePane === "split" ? "lg:grid-cols-2" : "grid-cols-1"}`}>
+          <section
+            className={`relative border-border-subtle transition-colors duration-200 ${
+              activePane === "split" ? "lg:border-r" : ""
+            } ${activePane === "preview" ? "hidden" : "block"} ${
+              isDragging ? "bg-foreground/5 ring-2 ring-inset ring-foreground/20" : ""
+            }`}
+            onDragEnter={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              dragDepthRef.current += 1;
+              setIsDragging(true);
+            }}
+            onDragLeave={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              dragDepthRef.current -= 1;
+              if (dragDepthRef.current <= 0) {
+                dragDepthRef.current = 0;
+                setIsDragging(false);
+              }
+            }}
+            onDragOver={(e) => {
+              e.preventDefault();
+              e.dataTransfer.dropEffect = "copy";
+            }}
+            onDrop={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              dragDepthRef.current = 0;
+              setIsDragging(false);
+              void handleFiles(e.dataTransfer.files);
+            }}
+          >
+            {isDragging ? (
+              <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center bg-foreground/5 backdrop-blur-[1px]">
+                <p className="rounded-xl border border-border bg-surface px-4 py-2 text-sm font-medium text-foreground shadow-md">
+                  Drop your .md file here
+                </p>
+              </div>
+            ) : null}
+
+            <div className="flex flex-col gap-3 p-4 sm:p-5">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <h2 className="text-sm font-semibold text-foreground">Your document</h2>
+                  <p className="text-xs text-text-tertiary">Paste Markdown or drop a file</p>
+                </div>
+                <span className="font-mono text-xs text-text-tertiary">{charCount.toLocaleString()} chars</span>
+              </div>
+
+              {loadedFileName ? (
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="inline-flex items-center gap-1.5 rounded-lg border border-border-subtle bg-surface-muted px-3 py-1.5 text-xs font-medium text-foreground">
+                    <FileIcon className="h-3.5 w-3.5 text-text-secondary" aria-hidden />
+                    {loadedFileName}
+                  </span>
+                  <button
+                    type="button"
+                    className="cursor-pointer text-xs font-medium text-text-secondary hover:text-foreground hover:underline"
+                    onClick={() => {
+                      setLoadedFileName(null);
+                    }}
+                  >
+                    Remove
+                  </button>
+                </div>
+              ) : null}
+
+              {fileHint ? (
+                <p className="rounded-lg bg-warning/10 px-3 py-2 text-sm text-warning" role="status">
+                  {fileHint}
+                </p>
+              ) : null}
+
+              <label htmlFor="md" className="sr-only">
+                Markdown source
+              </label>
+              <textarea
+                id="md"
+                className="input-base min-h-[min(70vh,800px)] w-full resize-y p-4 font-mono text-[13px] leading-relaxed"
+                value={markdown}
+                onChange={(e) => {
+                  setMarkdown(e.target.value);
+                  setLoadedFileName(null);
+                  setFileHint(null);
+                }}
+                spellCheck={false}
+                placeholder="Write or paste Markdown here…"
+              />
+            </div>
+          </section>
+
+          <div className={`p-4 sm:p-5 ${activePane === "edit" ? "hidden" : "block"}`}>
+            <MarkdownPreview markdown={markdown} options={exportOptions} />
+          </div>
+        </div>
       </div>
 
       {(jobId !== null || status !== null || error !== null || downloadUrl !== null) && (
-        <section className="rounded-2xl border border-zinc-200/80 bg-white p-6 shadow-sm dark:border-zinc-800 dark:bg-zinc-950/60">
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <section
+          className={`rounded-xl border p-5 transition-colors duration-200 ${statusAccentClass(status)}`}
+          role="status"
+          aria-live="polite"
+        >
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex items-start gap-3">
-              <span
-                className={`mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full ${statusDotClass(status)}`}
-                aria-hidden
-              />
+              {busy ? (
+                <SpinnerIcon className="mt-0.5 h-5 w-5 shrink-0 text-foreground motion-safe:animate-spin" aria-hidden />
+              ) : (
+                <span
+                  className={`mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full ${
+                    status === "completed"
+                      ? "bg-success"
+                      : status === "failed"
+                        ? "bg-danger"
+                        : status === "running"
+                          ? "bg-foreground motion-safe:animate-pulse"
+                          : "bg-warning"
+                  }`}
+                  aria-hidden
+                />
+              )}
               <div>
-                <p className="text-sm font-medium text-zinc-900 dark:text-zinc-50">{formatStatusLabel(status)}</p>
+                <p className="text-sm font-semibold text-foreground">{formatStatusLabel(status)}</p>
                 {jobId ? (
-                  <p className="mt-1 break-all font-mono text-xs text-zinc-500 dark:text-zinc-400">{jobId}</p>
+                  <p className="mt-1 break-all font-mono text-xs text-text-tertiary">{jobId}</p>
                 ) : null}
               </div>
             </div>
             {downloadUrl ? (
-              <a
-                className="inline-flex w-full items-center justify-center rounded-xl bg-emerald-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-500 sm:w-auto"
-                href={downloadUrl}
-              >
+              <a href={downloadUrl} className="btn-primary w-full px-5 py-2.5 text-sm sm:w-auto">
+                <DownloadIcon className="h-4 w-4" />
                 Download PDF
               </a>
             ) : null}
           </div>
           {error ? (
-            <p className="mt-4 whitespace-pre-wrap text-sm text-red-700 dark:text-red-300" role="alert">
+            <p className="mt-4 whitespace-pre-wrap rounded-lg bg-danger/10 px-3 py-2 text-sm text-danger" role="alert">
               {error}
             </p>
           ) : null}
         </section>
       )}
-    </div>
-  );
-}
 
-function Spinner(): React.ReactElement {
-  return (
-    <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" aria-hidden>
-      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-      <path
-        className="opacity-75"
-        fill="currentColor"
-        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+      <JobHistory
+        refreshKey={historyRefreshKey}
+        onSelectJob={(id) => {
+          setJobId(id);
+        }}
       />
-    </svg>
-  );
-}
-
-function UploadIcon({ className }: { readonly className?: string }): React.ReactElement {
-  return (
-    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
-    </svg>
-  );
-}
-
-function FileIcon({ className }: { readonly className?: string }): React.ReactElement {
-  return (
-    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-    </svg>
+    </div>
   );
 }

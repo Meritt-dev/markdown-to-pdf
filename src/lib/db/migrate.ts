@@ -15,6 +15,10 @@ CREATE TABLE IF NOT EXISTS jobs (
 CREATE INDEX IF NOT EXISTS idx_jobs_status_created ON jobs (status, created_at);
 `;
 
+const optionsColumnDdl = `
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS options JSONB NOT NULL DEFAULT '{}'::jsonb;
+`;
+
 /**
  * Applies idempotent schema migrations required for the job queue.
  *
@@ -23,4 +27,5 @@ CREATE INDEX IF NOT EXISTS idx_jobs_status_created ON jobs (status, created_at);
  */
 export async function runMigrations(pool: Pool): Promise<void> {
   await pool.query(ddl);
+  await pool.query(optionsColumnDdl);
 }

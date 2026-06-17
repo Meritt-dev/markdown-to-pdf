@@ -27,6 +27,7 @@ export async function GET(_request: Request, { params }: RouteParams): Promise<R
       id: job.id,
       status: job.status,
       error: job.error,
+      options: job.options,
       createdAt: job.createdAt,
       updatedAt: job.updatedAt,
       downloadUrl: job.status === "completed" ? `/api/jobs/${job.id}/download` : null,
