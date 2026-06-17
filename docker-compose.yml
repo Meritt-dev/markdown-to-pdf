@@ -24,5 +24,26 @@ services:
       API_TIMEOUT: 120s
     # Paper size and margins are primarily controlled by the app's CSS `@page` + form fields.
 
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL: postgresql://md2pdf:md2pdf@postgres:5432/md2pdf
+      GOTENBERG_URL: http://gotenberg:3000
+      PDF_STORAGE_PATH: /app/data/pdfs
+      STALE_JOB_MINUTES: "10"
+      JOB_RETENTION_DAYS: "7"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      gotenberg:
+        condition: service_started
+    volumes:
+      - md2pdf_pdfs:/app/data/pdfs
+
 volumes:
   md2pdf_pgdata:
+  md2pdf_pdfs:

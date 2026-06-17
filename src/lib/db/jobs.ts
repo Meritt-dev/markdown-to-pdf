@@ -1,7 +1,9 @@
 import type { Pool } from "pg";
+import fs from "node:fs";
 
 import type { ExportOptions } from "@/lib/export-options";
 import { parseExportOptions, serializeExportOptions } from "@/lib/export-options";
+import { getPdfPathForJob } from "@/lib/paths";
 
 export type JobStatus = "pending" | "running" | "completed" | "failed";
 
@@ -200,4 +202,85 @@ export async function claimNextPendingJob(pool: Pool): Promise<ClaimedJob | null
   } finally {
     client.release();
   }
+}
+
+/**
+ * Resets stale jobs stuck in "running" status back to "failed".
+ *
+ * A job is considered stale if it has been running for longer than the specified threshold.
+ * This function is designed to be called periodically by the worker to recover from
+ * crashed or hung jobs that never completed.
+ *
+ * @param pool - Postgres pool.
+ * @param staleMinutes - Number of minutes before a running job is considered stale.
+ * @returns The count of jobs recovered.
+ * @example
+ * const recovered = await recoverStaleJobs(pool, 10);
+ * log.info({ count: recovered }, "recovered stale jobs");
+ */
+export async function recoverStaleJobs(pool: Pool, staleMinutes: number): Promise<number> {
+  const result = await pool.query(
+    `
+    UPDATE jobs
+    SET status = 'failed',
+        error = 'Job timed out after being stuck in running state',
+        updated_at = NOW()
+    WHERE status = 'running'
+      AND updated_at < NOW() - INTERVAL '1 minute' * $1
+    RETURNING id
+    `,
+    [staleMinutes],
+  );
+  return result.rowCount ?? 0;
+}
+
+/**
+ * Deletes jobs and their associated PDF files older than the specified number of days.
+ *
+ * This function removes completed and failed jobs from the database and attempts to
+ * delete their corresponding PDF files from disk. It should be called periodically
+ * to prevent unbounded growth of storage and database rows.
+ *
+ * @param pool - Postgres pool.
+ * @param retentionDays - Number of days to retain jobs and PDFs.
+ * @returns Object containing count of deleted jobs and PDF files.
+ * @example
+ * const result = await cleanupOldJobs(pool, 7);
+ * log.info({ jobs: result.jobsDeleted, pdfs: result.pdfsDeleted }, "cleanup completed");
+ */
+export async function cleanupOldJobs(
+  pool: Pool,
+  retentionDays: number,
+): Promise<{ jobsDeleted: number; pdfsDeleted: number; pdfsErrored: number }> {
+  const res = await pool.query<{ id: string }>(
+    `
+    DELETE FROM jobs
+    WHERE created_at < NOW() - INTERVAL '1 day' * $1
+    RETURNING id
+    `,
+    [retentionDays],
+  );
+
+  const deletedIds = res.rows.map((row) => row.id);
+  let pdfsDeleted = 0;
+  let pdfsErrored = 0;
+
+  for (const id of deletedIds) {
+    try {
+      const pdfPath = getPdfPathForJob(id);
+      await fs.promises.unlink(pdfPath);
+      pdfsDeleted++;
+    } catch (error: unknown) {
+      if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+        continue;
+      }
+      pdfsErrored++;
+    }
+  }
+
+  return {
+    jobsDeleted: deletedIds.length,
+    pdfsDeleted,
+    pdfsErrored,
+  };
 }

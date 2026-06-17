@@ -25,28 +25,92 @@ interface JobStatusPayload {
 
 const MAX_MARKDOWN_BYTES = 2_000_000;
 
-const sampleMarkdown = `# Markdown → PDF test
+const sampleMarkdown = `---
+title: Professional Markdown to PDF
+author: Your Name
+date: June 17, 2026
+---
 
-Paragraph with a **verylongunbrokenword** and a normal URL: https://example.com/path/to/something?query=long-value-here
+## Table of Contents
 
-## Table
+## Introduction
 
-| Column A | Column B | Notes |
-| -------- | -------- | ----- |
-| Short | Another | OK |
-| Long technical identifier that should wrap | Value | Check wrapping |
-| \`inline code cell with_long_token\` | 42 | Code in cells |
+This document showcases **all Tier 2 features** including front matter, syntax highlighting, tables of contents, math rendering, and more.
 
-## Code
+## Syntax Highlighting
 
-\`\`\`ts
-const example = "strings that might overflow in some renderers";
+Code blocks now have beautiful syntax highlighting:
+
+\`\`\`typescript
+interface User {
+  id: number;
+  name: string;
+  email: string;
+}
+
+async function fetchUser(id: number): Promise<User> {
+  const response = await fetch(\`/api/users/\${id}\`);
+  return response.json();
+}
 \`\`\`
 
-## Task list
+\`\`\`python
+def fibonacci(n: int) -> int:
+    """Calculate the nth Fibonacci number."""
+    if n <= 1:
+        return n
+    return fibonacci(n - 1) + fibonacci(n - 2)
 
-- [x] Generate PDF
-- [ ] Iterate on CSS
+print(fibonacci(10))
+\`\`\`
+
+## Mathematics
+
+Inline math: The Pythagorean theorem is $a^2 + b^2 = c^2$.
+
+Display math:
+
+$$
+\\frac{-b \\pm \\sqrt{b^2 - 4ac}}{2a}
+$$
+
+More complex formula:
+
+$$
+\\sum_{i=1}^{n} i = \\frac{n(n+1)}{2}
+$$
+
+## Tables
+
+| Feature | Status | Priority |
+| ------- | ------ | -------- |
+| Front matter | ✅ Done | High |
+| Syntax highlighting | ✅ Done | High |
+| Table of Contents | ✅ Done | Medium |
+| Math (KaTeX) | ✅ Done | Low |
+| Image inlining | ✅ Done | Medium |
+
+## Task Lists
+
+- [x] Implement front matter parsing
+- [x] Add syntax highlighting
+- [x] Generate table of contents
+- [x] Render mathematical equations
+- [x] Inline remote images as base64
+
+## Advanced Formatting
+
+You can use **bold**, *italic*, ~~strikethrough~~, and \`inline code\`.
+
+> This is a blockquote. Perfect for highlighting important information or quotes from other sources.
+
+---
+
+### Links and Text
+
+Visit [Markdown Guide](https://www.markdownguide.org) for more information.
+
+Long URL that should wrap: https://example.com/path/to/something/very/long/that/should/wrap/nicely/in/the/pdf/output
 `;
 
 function isMarkdownLikeFile(file: File): boolean {
@@ -129,6 +193,7 @@ export function JobConsole(): React.ReactElement {
   const [fileHint, setFileHint] = useState<string | null>(null);
   const [historyRefreshKey, setHistoryRefreshKey] = useState(0);
   const pollRef = useRef<number | null>(null);
+  const eventSourceRef = useRef<EventSource | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dragDepthRef = useRef(0);
 
@@ -140,6 +205,18 @@ export function JobConsole(): React.ReactElement {
       pollRef.current = null;
     }
   }, []);
+
+  const stopEventSource = useCallback(() => {
+    if (eventSourceRef.current !== null) {
+      eventSourceRef.current.close();
+      eventSourceRef.current = null;
+    }
+  }, []);
+
+  const stopAllTracking = useCallback(() => {
+    stopPolling();
+    stopEventSource();
+  }, [stopPolling, stopEventSource]);
 
   const pollJob = useCallback(
     async (id: string) => {
@@ -159,19 +236,62 @@ export function JobConsole(): React.ReactElement {
       setDownloadUrl(payload.downloadUrl);
 
       if (payload.status === "completed" || payload.status === "failed") {
-        stopPolling();
+        stopAllTracking();
         setBusy(false);
         setHistoryRefreshKey((k) => k + 1);
       }
     },
-    [stopPolling],
+    [stopAllTracking],
+  );
+
+  const startEventSource = useCallback(
+    (id: string) => {
+      const es = new EventSource(`/api/jobs/${id}/stream`);
+
+      es.addEventListener("status", (event) => {
+        try {
+          const payload = JSON.parse(event.data) as JobStatusPayload;
+          setStatus(payload.status);
+          setError(payload.error);
+          setDownloadUrl(payload.downloadUrl);
+
+          if (payload.status === "completed" || payload.status === "failed") {
+            stopAllTracking();
+            setBusy(false);
+            setHistoryRefreshKey((k) => k + 1);
+          }
+        } catch (err: unknown) {
+          /* ignore parse errors */
+        }
+      });
+
+      es.addEventListener("error", () => {
+        stopEventSource();
+        pollRef.current = window.setInterval(() => {
+          pollJob(id).catch((err: unknown) => {
+            stopAllTracking();
+            setBusy(false);
+            setError(err instanceof Error ? err.message : "Lost connection while exporting.");
+          });
+        }, 900);
+
+        void pollJob(id).catch((err: unknown) => {
+          stopAllTracking();
+          setBusy(false);
+          setError(err instanceof Error ? err.message : "Lost connection while exporting.");
+        });
+      });
+
+      eventSourceRef.current = es;
+    },
+    [pollJob, stopAllTracking, stopEventSource],
   );
 
   useEffect(() => {
     return () => {
-      stopPolling();
+      stopAllTracking();
     };
-  }, [stopPolling]);
+  }, [stopAllTracking]);
 
   const applyLoadedMarkdown = useCallback((text: string, fileName: string | null) => {
     setMarkdown(text);
@@ -202,7 +322,7 @@ export function JobConsole(): React.ReactElement {
     setStatus(null);
     setError(null);
     setDownloadUrl(null);
-    stopPolling();
+    stopAllTracking();
 
     const res = await fetch("/api/jobs", {
       method: "POST",
@@ -232,19 +352,7 @@ export function JobConsole(): React.ReactElement {
     setStatus("pending");
     setHistoryRefreshKey((k) => k + 1);
 
-    pollRef.current = window.setInterval(() => {
-      pollJob(id).catch((err: unknown) => {
-        stopPolling();
-        setBusy(false);
-        setError(err instanceof Error ? err.message : "Lost connection while exporting.");
-      });
-    }, 900);
-
-    await pollJob(id).catch((err: unknown) => {
-      stopPolling();
-      setBusy(false);
-      setError(err instanceof Error ? err.message : "Lost connection while exporting.");
-    });
+    startEventSource(id);
   }
 
   return (

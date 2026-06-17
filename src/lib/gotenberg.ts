@@ -43,17 +43,37 @@ function mmToInches(mm: number): number {
 }
 
 /**
+ * Optional PDF metadata to embed in the generated PDF.
+ */
+export interface PdfMetadata {
+  /**
+   * Document title.
+   */
+  readonly title?: string;
+
+  /**
+   * Document author.
+   */
+  readonly author?: string;
+}
+
+/**
  * Converts an HTML document to PDF bytes using a Gotenberg 8 Chromium route.
  *
  * @param html - Full HTML document (with embedded CSS recommended).
  * @param options - Paper size, margins, and footer options.
+ * @param metadata - Optional PDF metadata (title, author) to embed in the PDF.
  * @returns PDF binary.
  * @throws Error when Gotenberg is unreachable or returns a non-OK response.
  *
  * @example
- * const pdf = await convertHtmlToPdf("<!DOCTYPE html><html>...</html>", options);
+ * const pdf = await convertHtmlToPdf("<!DOCTYPE html><html>...</html>", options, { title: "My Doc" });
  */
-export async function convertHtmlToPdf(html: string, options: ExportOptions): Promise<Buffer> {
+export async function convertHtmlToPdf(
+  html: string,
+  options: ExportOptions,
+  metadata?: PdfMetadata,
+): Promise<Buffer> {
   const baseUrl = process.env.GOTENBERG_URL ?? "http://localhost:3030";
   const url = new URL("/forms/chromium/convert/html", baseUrl).toString();
   const { width, height } = paperSizeToInches(options.paperSize);
@@ -81,6 +101,14 @@ export async function convertHtmlToPdf(html: string, options: ExportOptions): Pr
   form.append("marginBottom", String(bottomMarginInches));
   form.append("marginLeft", String(marginInches));
   form.append("marginRight", String(marginInches));
+
+  // Add PDF metadata if provided
+  if (metadata?.title) {
+    form.append("pdfTitle", metadata.title);
+  }
+  if (metadata?.author) {
+    form.append("pdfAuthor", metadata.author);
+  }
 
   const response = await fetch(url, {
     method: "POST",

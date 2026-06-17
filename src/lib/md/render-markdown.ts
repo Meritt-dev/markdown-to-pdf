@@ -1,13 +1,34 @@
-import rehypeSanitize from "rehype-sanitize";
-import rehypeStringify from "rehype-stringify";
-import remarkGfm from "remark-gfm";
-import remarkParse from "remark-parse";
-import remarkRehype from "remark-rehype";
-import { unified } from "unified";
+import fs from "node:fs";
+import path from "node:path";
 
 import type { ExportOptions } from "@/lib/export-options";
 import { DEFAULT_EXPORT_OPTIONS } from "@/lib/export-options";
+import { buildCoverHtml, extractMetadata } from "@/lib/md/front-matter";
+import { createMarkdownProcessor } from "@/lib/md/pipeline";
 import { buildPrintThemeCss } from "@/lib/md/themes";
+import type { MarkdownProcessingResult } from "@/lib/md/types";
+
+let katexCssCache: string | null = null;
+
+/**
+ * Reads and caches the KaTeX CSS for embedding in HTML documents.
+ *
+ * @returns KaTeX CSS content as a string.
+ */
+function getKatexCss(): string {
+  if (katexCssCache !== null) {
+    return katexCssCache;
+  }
+
+  try {
+    const katexCssPath = path.join(process.cwd(), "node_modules", "katex", "dist", "katex.min.css");
+    katexCssCache = fs.readFileSync(katexCssPath, "utf-8");
+    return katexCssCache;
+  } catch {
+    // If KaTeX CSS can't be loaded, return empty string
+    return "";
+  }
+}
 
 /**
  * Converts Markdown (GFM) into a complete HTML document suitable for Chromium print / Gotenberg.
@@ -15,42 +36,52 @@ import { buildPrintThemeCss } from "@/lib/md/themes";
  * @param markdown - Source Markdown.
  * @param documentLang - BCP 47 language tag for hyphenation (e.g. `en`).
  * @param options - Print theme, paper size, and margin options.
- * @returns Full HTML document string with embedded print CSS.
+ * @returns Processing result with HTML document and metadata.
  *
  * @example
- * const html = await renderMarkdownToHtmlDocument("# Hi\\n\\n|a|b|\\n|-|-|\\n|1|2|", "en");
+ * const result = await renderMarkdownToHtmlDocument("# Hi\\n\\n|a|b|\\n|-|-|\\n|1|2|", "en");
+ * console.log(result.html, result.metadata.title);
  */
 export async function renderMarkdownToHtmlDocument(
   markdown: string,
   documentLang: string,
   options: ExportOptions = DEFAULT_EXPORT_OPTIONS,
-): Promise<string> {
-  const file = await unified()
-    .use(remarkParse)
-    .use(remarkGfm)
-    .use(remarkRehype)
-    .use(rehypeSanitize)
-    .use(rehypeStringify)
-    .process(markdown);
+): Promise<MarkdownProcessingResult> {
+  const processor = createMarkdownProcessor({
+    syntaxHighlighting: true,
+    tableOfContents: true,
+    inlineImages: true,
+    math: true,
+    frontmatter: true,
+  });
 
-  const body = String(file);
+  const file = await processor.process(markdown);
+  const metadata = extractMetadata(file.data);
+  const bodyContent = String(file);
+
+  const coverHtml = buildCoverHtml(metadata);
   const printCss = buildPrintThemeCss(options);
+  const katexCss = getKatexCss();
 
-  return `<!DOCTYPE html>
+  const title = metadata.title ?? "Document";
+
+  const html = `<!DOCTYPE html>
 <html lang="${escapeHtmlAttr(documentLang)}">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Document</title>
+  <title>${escapeHtmlAttr(title)}</title>
   <style>
 ${printCss}
   </style>
-</head>
+${katexCss ? `  <style>\n${katexCss}\n  </style>\n` : ""}</head>
 <body>
-${body}
+${coverHtml ? `${coverHtml}\n` : ""}${bodyContent}
 </body>
 </html>
 `;
+
+  return { html, metadata };
 }
 
 /**
@@ -60,15 +91,21 @@ ${body}
  * @returns Sanitized HTML body fragment.
  */
 export async function renderMarkdownToHtmlFragment(markdown: string): Promise<string> {
-  const file = await unified()
-    .use(remarkParse)
-    .use(remarkGfm)
-    .use(remarkRehype)
-    .use(rehypeSanitize)
-    .use(rehypeStringify)
-    .process(markdown);
+  const processor = createMarkdownProcessor({
+    syntaxHighlighting: true,
+    tableOfContents: true,
+    inlineImages: false, // Skip image fetching for preview
+    math: true,
+    frontmatter: true,
+  });
 
-  return String(file);
+  const file = await processor.process(markdown);
+  const metadata = extractMetadata(file.data);
+  const bodyContent = String(file);
+
+  const coverHtml = buildCoverHtml(metadata);
+
+  return coverHtml ? `${coverHtml}\n${bodyContent}` : bodyContent;
 }
 
 function escapeHtmlAttr(value: string): string {

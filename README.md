@@ -63,25 +63,27 @@ The worker must be running — `npm run dev:all` starts it automatically.
 
 | Input              | Pipeline                    | Output                    |
 | ------------------ | --------------------------- | ------------------------- |
-| Markdown (GFM)     | remark → rehype → sanitize  | Print-themed HTML         |
+| Markdown (GFM + YAML) | remark plugins → rehype plugins | Print-themed HTML with embedded assets |
 | UI or `POST /api/jobs` | Job row in Postgres     | Job ID + status polling   |
-| Background worker  | Gotenberg Chromium route    | PDF on disk               |
+| Background worker  | Gotenberg Chromium route    | PDF on disk with metadata |
 | Download API       | `GET /api/jobs/:id/download` | `application/pdf`    |
 
-Pipeline: **Markdown → HTML → Chromium print → PDF**
+Pipeline: **Markdown → unified processor (frontmatter, TOC, math, syntax highlighting, image inlining) → HTML → Chromium print → PDF**
 
 ## What it renders
 
-GitHub Flavored Markdown with a print-first theme baked into the HTML:
+GitHub Flavored Markdown with professional document features and a print-first theme:
 
-- Headings, paragraphs, blockquotes
-- Tables (with wrapping for long cells)
-- Task lists
-- Fenced code blocks
-- Links and inline code
-- A4 page model with `@page` margins
+- **Front matter (YAML)** — Extract title, author, date from `---` blocks; render as cover page; inject into PDF metadata
+- **Syntax highlighting** — Color-coded code blocks with rehype-highlight
+- **Table of Contents** — Auto-generated from headings with `## Table of Contents` placeholder
+- **Mathematics** — LaTeX formulas rendered with KaTeX (inline: `$...$`, display: `$$...$$`)
+- **Remote images** — Fetched and inlined as base64 data URIs for self-contained PDFs
+- **GFM support** — Tables, task lists, strikethrough, autolinks
+- **Typography** — Headings, paragraphs, blockquotes, lists, code blocks
+- **Print-first CSS** — A4/Letter page model, hyphenation, table wrapping, page breaks
 
-HTML is sanitized before rendering. CSS is embedded — PDF output does not depend on external assets.
+HTML is sanitized before rendering. All CSS, fonts, and images are embedded — PDF output does not depend on external assets.
 
 ## Example flow
 
@@ -112,6 +114,8 @@ POST /api/jobs          →  { "id": "…" }
 GET  /api/jobs          →  { "jobs": [ … ] }
 GET  /api/jobs/:id      →  { "status": "completed", "downloadUrl": "…", "options": { … } }
 GET  /api/jobs/:id/download  →  PDF bytes
+GET  /api/jobs/:id/stream    →  Server-Sent Events (real-time status)
+GET  /api/health        →  { "status": "ok"|"degraded", "postgres": boolean, "gotenberg": boolean }
 ```
 
 ## Principles
@@ -128,16 +132,26 @@ GET  /api/jobs/:id/download  →  PDF bytes
 
 **Today**
 
-* Web UI with paste, file upload, drag-and-drop, and status polling
+* Web UI with paste, file upload, drag-and-drop, and real-time status updates (SSE)
 * **Live preview** — side-by-side editor and server-rendered HTML preview
 * **Export options** — theme (default / minimal / docs), A4 or Letter, margin presets, page numbers
 * **Job history** — recent exports with re-download
+* **Health monitoring** — `/api/health` endpoint to verify Postgres and Gotenberg connectivity
+* **Stale job recovery** — automatic reset of jobs stuck in `running` state for >10 minutes
+* **Automated cleanup** — retention policy to delete old jobs and PDFs (default: 7 days)
+* **Server-Sent Events** — real-time job status updates without polling
+* **Professional document features (Tier 2)**
+  * **Front matter** — YAML metadata blocks (`title`, `author`, `date`) with cover page rendering and PDF metadata injection
+  * **Syntax highlighting** — Automatic code block highlighting with rehype-highlight
+  * **Table of Contents** — Auto-generated TOC from headings
+  * **Mathematics** — KaTeX rendering for inline and display math formulas
+  * **Image inlining** — Remote images fetched and embedded as base64 for self-contained PDFs
 * REST API for create, preview, list, status, and download
-* GFM rendering (tables, task lists, code fences)
+* GFM rendering (tables, task lists, code fences, strikethrough)
 * Sanitized HTML + embedded print CSS
 * Gotenberg 8 Chromium PDF generation
 * Postgres job queue with background worker
-* Docker Compose for Postgres + Gotenberg
+* Docker Compose for Postgres + Gotenberg + App (full-stack deployment)
 
 **Reasonable extensions**
 
@@ -145,6 +159,8 @@ GET  /api/jobs/:id/download  →  PDF bytes
 * Auth and multi-tenant job isolation
 * Object storage instead of local disk
 * Webhooks on job completion
+
+See [ROADMAP.md](./ROADMAP.md) for the full Tier 2-4 plan.
 
 ---
 
@@ -191,6 +207,8 @@ Copy `.env.example` to `.env.local`. The worker loads `.env.local` first, then `
 | `GOTENBERG_URL` | `http://localhost:3030` | Gotenberg API (host `3030` → container `3000`) |
 | `PDF_STORAGE_PATH` | `./data/pdfs` | Where completed PDFs are stored (created automatically) |
 | `DOCUMENT_LOCALE` | `en` | BCP 47 tag for CSS hyphenation |
+| `STALE_JOB_MINUTES` | `10` | Minutes before a running job is considered stale and reset |
+| `JOB_RETENTION_DAYS` | `7` | Days to retain jobs and PDFs before automatic cleanup |
 
 Job `options` (JSON) accepted by `POST /api/jobs` and `POST /api/preview`:
 
@@ -258,6 +276,7 @@ npm run worker   # terminal 2
 | `npm run dev` | Next.js development server |
 | `npm run dev:all` | Next.js + worker together (recommended for local dev) |
 | `npm run worker` | Background job processor |
+| `npm run cleanup` | Delete old jobs and PDFs (respects `JOB_RETENTION_DAYS`) |
 | `npm run build` | Production build |
 | `npm run start` | Production server (run `build` first) |
 | `npm run lint` | ESLint |
@@ -270,16 +289,93 @@ npm run worker   # terminal 2
 | Jobs stuck on “Queued” / `pending` | Start the worker: `npm run worker` |
 | Gotenberg errors | Confirm `GOTENBERG_URL=http://localhost:3030` in `.env.local` |
 
+## Operational Features
+
+### Health Monitoring
+
+Check system health with the `/api/health` endpoint:
+
+```bash
+curl http://localhost:3000/api/health
+```
+
+Returns `200 OK` when all services are healthy, `503 Service Unavailable` if any dependency is down:
+
+```json
+{
+  "status": "ok",
+  "postgres": true,
+  "gotenberg": true
+}
+```
+
+### Stale Job Recovery
+
+The worker automatically recovers jobs stuck in `running` state:
+
+- Runs on worker startup
+- Checks every 60 seconds during operation
+- Resets jobs stuck for longer than `STALE_JOB_MINUTES` (default: 10 minutes)
+- Marks recovered jobs as `failed` with timeout message
+
+### Cleanup and Retention
+
+Delete old jobs and PDFs to prevent unbounded storage growth:
+
+```bash
+npm run cleanup
+```
+
+- Removes jobs and PDFs older than `JOB_RETENTION_DAYS` (default: 7 days)
+- Can be run manually or scheduled as a cron job
+- Logs deleted job count and any file deletion errors
+
+### Real-Time Status Updates
+
+The UI uses Server-Sent Events (SSE) for instant job status updates:
+
+- Connects to `/api/jobs/:id/stream` when a job is created
+- Receives status changes in real-time via Postgres LISTEN/NOTIFY
+- Falls back to polling if SSE connection fails
+- No manual refresh needed — status updates automatically
+
+## Docker Deployment
+
+Run the entire stack (app + worker + dependencies) with Docker Compose:
+
+```bash
+docker compose up -d
+```
+
+The `app` service runs both the Next.js server and background worker in a single container.
+
+**Services:**
+
+- `app` — Next.js + worker (port 3000)
+- `postgres` — Postgres 16 (port 5432)
+- `gotenberg` — Gotenberg 8 (internal)
+
+**Volumes:**
+
+- `md2pdf_pgdata` — Postgres data
+- `md2pdf_pdfs` — Generated PDF files
+
+**Environment:**
+
+The `app` service is configured via `docker-compose.yml`. To customize, edit the `environment` section or use a `.env` file.
+
 ## Layout
 
 ```
 src/
   app/
     api/jobs/           REST API (create, list, status, download)
+    api/jobs/[id]/stream/   Server-Sent Events for real-time status
     api/preview/        Live HTML preview (no job created)
+    api/health/         Health check endpoint
     page.tsx            Home UI
   components/
-    job-console.tsx     Editor, preview, export, status
+    job-console.tsx     Editor, preview, export, status (with SSE)
     export-options-panel.tsx
     markdown-preview.tsx
     job-history.tsx
@@ -288,6 +384,9 @@ src/
     db/                 Postgres pool, migrations, job queries
     md/themes/          Print CSS themes (default, minimal, docs)
     gotenberg.ts        HTML → PDF client
+scripts/
+  worker.ts             Background job processor with stale job recovery
+  cleanup.ts            Retention cleanup script
 ```
 
 ## Foundation

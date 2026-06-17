@@ -26,7 +26,7 @@ export async function POST(request: Request): Promise<Response> {
 
     const options = resolveExportOptions(parsed.data.options);
     const docLang = process.env.DOCUMENT_LOCALE ?? "en";
-    const html = await renderMarkdownToHtmlDocument(parsed.data.markdown || " ", docLang, options);
+    const { html } = await renderMarkdownToHtmlDocument(parsed.data.markdown || " ", docLang, options);
 
     return Response.json({ html });
   } catch (error: unknown) {

@@ -7,13 +7,16 @@ dotenv.config();
 
 import { createLogger } from "@/lib/logger";
 import type { ExportOptions } from "@/lib/export-options";
-import { claimNextPendingJob, markJobCompleted, markJobFailed } from "@/lib/db/jobs";
+import { claimNextPendingJob, markJobCompleted, markJobFailed, recoverStaleJobs } from "@/lib/db/jobs";
 import { getPool } from "@/lib/db/pool";
 import { convertHtmlToPdf } from "@/lib/gotenberg";
 import { renderMarkdownToHtmlDocument } from "@/lib/md/render-markdown";
 import { ensurePdfStorageDir, getPdfPathForJob } from "@/lib/paths";
 
 const log = createLogger("worker");
+
+const STALE_JOB_MINUTES = Number.parseInt(process.env.STALE_JOB_MINUTES ?? "10", 10);
+const RECOVERY_INTERVAL_MS = 60_000;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
@@ -29,20 +32,46 @@ async function processOneJob(
 ) {
   ensurePdfStorageDir();
   const docLang = process.env.DOCUMENT_LOCALE ?? "en";
-  const html = await renderMarkdownToHtmlDocument(markdown, docLang, options);
-  const pdf = await convertHtmlToPdf(html, options);
+  const result = await renderMarkdownToHtmlDocument(markdown, docLang, options);
+  const pdf = await convertHtmlToPdf(result.html, options, {
+    title: result.metadata.title,
+    author: result.metadata.author,
+  });
   const outPath = getPdfPathForJob(jobId);
   await fs.promises.writeFile(outPath, pdf);
   await markJobCompleted(pool, jobId);
-  log.info({ jobId, bytes: pdf.length }, "job completed");
+  log.info({ jobId, bytes: pdf.length, title: result.metadata.title }, "job completed");
 }
 
 async function main(): Promise<void> {
   const pool = await getPool();
-  log.info("worker started; polling for jobs");
+  log.info({ staleMinutes: STALE_JOB_MINUTES }, "worker started; polling for jobs");
+
+  try {
+    const recovered = await recoverStaleJobs(pool, STALE_JOB_MINUTES);
+    if (recovered > 0) {
+      log.info({ count: recovered }, "recovered stale jobs on startup");
+    }
+  } catch (error: unknown) {
+    log.error({ err: error }, "failed to recover stale jobs on startup");
+  }
+
+  let lastRecoveryTime = Date.now();
 
   for (;;) {
     try {
+      if (Date.now() - lastRecoveryTime >= RECOVERY_INTERVAL_MS) {
+        try {
+          const recovered = await recoverStaleJobs(pool, STALE_JOB_MINUTES);
+          if (recovered > 0) {
+            log.info({ count: recovered }, "recovered stale jobs");
+          }
+          lastRecoveryTime = Date.now();
+        } catch (error: unknown) {
+          log.error({ err: error }, "periodic stale job recovery failed");
+        }
+      }
+
       const claimed = await claimNextPendingJob(pool);
       if (!claimed) {
         await sleep(750);
