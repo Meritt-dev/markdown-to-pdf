@@ -1,0 +1,28 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: md2pdf
+      POSTGRES_PASSWORD: md2pdf
+      POSTGRES_DB: md2pdf
+    ports:
+      - "5432:5432"
+    volumes:
+      - md2pdf_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U md2pdf -d md2pdf"]
+      interval: 3s
+      timeout: 5s
+      retries: 10
+
+  gotenberg:
+    image: gotenberg/gotenberg:8
+    ports:
+      - "3030:3000"
+    environment:
+      # Allow larger / slower documents during local reliability testing (default is 30s).
+      API_TIMEOUT: 120s
+    # Paper size and margins are primarily controlled by the app's CSS `@page` + form fields.
+
+volumes:
+  md2pdf_pgdata:
