@@ -1,6 +1,7 @@
 # Markdown to PDF
 
 **Write Markdown. Get a print-ready PDF.**
+*A product of Meritt Dev.*
 
 Self-hosted Markdown → PDF conversion with a job queue, background worker, and Chromium rendering via Gotenberg. Paste or upload a document, convert, and download when it’s ready.
 
@@ -52,7 +53,7 @@ npm run dev:all
 1. Open [http://localhost:3000](http://localhost:3000)
 2. Paste Markdown or drop a `.md` file
 3. Pick a theme, paper size, margins, and optional page numbers
-4. Check the live preview panel
+4. Check the live preview panel (use **Split** tab for side-by-side editing)
 5. Click **Export PDF** and download when status shows **Ready**
 
 The worker must be running — `npm run dev:all` starts it automatically.
@@ -132,14 +133,14 @@ GET  /api/health        →  { "status": "ok"|"degraded", "postgres": boolean, "
 
 **Today**
 
-* Web UI with paste, file upload, drag-and-drop, and real-time status updates (SSE)
-* **Live preview** — side-by-side editor and server-rendered HTML preview
+* Web UI with paste, file upload, drag-and-drop, real-time status updates (SSE), and a modern **Dark UI**
+* **Live preview** — side-by-side editor and server-rendered HTML preview with **Split** view support (Edit / Preview / Split)
 * **Export options** — theme (default / minimal / docs), A4 or Letter, margin presets, page numbers
 * **Job history** — recent exports with re-download
-* **Health monitoring** — `/api/health` endpoint to verify Postgres and Gotenberg connectivity
-* **Stale job recovery** — automatic reset of jobs stuck in `running` state for >10 minutes
-* **Automated cleanup** — retention policy to delete old jobs and PDFs (default: 7 days)
-* **Server-Sent Events** — real-time job status updates without polling
+* **Health monitoring (Tier 3)** — `/api/health` endpoint to verify Postgres and Gotenberg connectivity
+* **Stale job recovery (Tier 3)** — automatic reset of jobs stuck in `running` state for >10 minutes
+* **Automated cleanup (Tier 3)** — retention policy to delete old jobs and PDFs (default: 7 days)
+* **Server-Sent Events (Tier 3)** — real-time job status updates without polling
 * **Professional document features (Tier 2)**
   * **Front matter** — YAML metadata blocks (`title`, `author`, `date`) with cover page rendering and PDF metadata injection
   * **Syntax highlighting** — Automatic code block highlighting with rehype-highlight
@@ -160,7 +161,7 @@ GET  /api/health        →  { "status": "ok"|"degraded", "postgres": boolean, "
 * Object storage instead of local disk
 * Webhooks on job completion
 
-See [ROADMAP.md](./ROADMAP.md) for the full Tier 2-4 plan.
+See [ROADMAP.md](./ROADMAP.md) for the full plan (Tiers 1–3 implemented, Tier 4 remaining).
 
 ---
 
@@ -194,6 +195,7 @@ Browser / curl
     → Postgres (pending)
     → Worker (claim → render HTML → Gotenberg → write PDF)
     → Postgres (completed)
+    → SSE Stream (real-time status: /api/jobs/:id/stream)
     → Download API
 ```
 
@@ -236,7 +238,7 @@ gotenberg: localhost:3030  (API_TIMEOUT: 120s)
 | Node.js 18+ (20+ recommended) | Next.js app and worker |
 | Docker | Postgres 16 and Gotenberg 8 via `docker compose` |
 
-Docker is required for local infrastructure. The app and worker run on the host with `npm`.
+Docker is required for local infrastructure. The app and worker can run on the host with `npm` (recommended for development) or via the unified Docker `app` service (Tier 3).
 
 ## Local development
 

@@ -2,7 +2,7 @@
 
 This document outlines the planned evolution of **Markdown to PDF**.
 
-Tier 1 is already implemented (preview, export options, themes, dev:all, job history). The following tiers focus on professional-grade output, operational reliability, and expanding the product's reach.
+Tiers 1–3 are already implemented (preview, export options, themes, dev:all, job history, Tier 2 PDF features, and Tier 3 reliability/ops). The following tier focuses on expanding the product's reach.
 
 ---
 
