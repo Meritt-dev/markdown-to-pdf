@@ -24,12 +24,21 @@ function sleep(ms: number): Promise<void> {
   });
 }
 
-async function processOneJob(
+/**
+ * Process a single job by converting markdown to PDF.
+ *
+ * @param jobId - Job identifier.
+ * @param markdown - Markdown content.
+ * @param options - Export options.
+ * @param pool - Database pool.
+ * @returns Promise that resolves when job completes.
+ */
+export async function processOneJob(
   jobId: string,
   markdown: string,
   options: ExportOptions,
   pool: Awaited<ReturnType<typeof getPool>>,
-) {
+): Promise<void> {
   ensurePdfStorageDir();
   const docLang = process.env.DOCUMENT_LOCALE ?? "en";
   const result = await renderMarkdownToHtmlDocument(markdown, docLang, options);

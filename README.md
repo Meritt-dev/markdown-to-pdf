@@ -86,6 +86,65 @@ GitHub Flavored Markdown with professional document features and a print-first t
 
 HTML is sanitized before rendering. All CSS, fonts, and images are embedded — PDF output does not depend on external assets.
 
+## Testing
+
+This project includes a comprehensive test suite using [Vitest](https://vitest.dev/) and @testing-library/react.
+
+### Running Tests
+
+```bash
+# Run all tests once
+npm run test
+
+# Run tests in watch mode (reruns on file changes)
+npm run test:watch
+
+# Run tests with UI
+npm run test:ui
+
+# Run tests with coverage report
+npm run test:coverage
+```
+
+### Test Coverage
+
+The test suite now covers 297 tests across multiple layers:
+
+#### Core Library Tests
+- **Export options** — Parsing and validation
+- **Front matter** — Extraction and cover page generation
+- **Markdown rendering** — GFM, math, syntax highlighting, TOC
+- **Rehype plugins** — Image inlining, size limits, and HTTP/HTTPS handling
+- **Gotenberg integration** — PDF conversion with paper sizes, margins, network errors
+- **Database operations** — Job CRUD, cleanup, recovery, migrations (mocked)
+- **File utilities** — Path generation and storage
+- **Theme engine** — CSS generation
+- **Logger** — Structured logging
+
+#### API Route Tests
+All HTTP endpoints with comprehensive request/response validation:
+- `GET /api/health` — Health check with Postgres and Gotenberg connectivity
+- `POST /api/preview` — Live preview rendering
+- `GET /api/jobs` — Job listing with pagination
+- `POST /api/jobs` — Job creation with validation
+- `GET /api/jobs/[id]` — Job status retrieval
+- `GET /api/jobs/[id]/download` — PDF download with status checks
+- `GET /api/jobs/[id]/stream` — SSE endpoint for real-time job updates
+
+#### Script Tests
+- **Worker** — Job processing, error handling, PDF generation
+- **Cleanup** — Old job deletion and retention policy
+
+#### React Component Tests
+- **ExportOptionsPanel** — Theme selection, paper size, margins, page numbers
+- **MarkdownPreview** — Live preview with debouncing, error states, iframe rendering
+- **JobHistory** — Job list loading, refresh, status display, download links
+- **JobConsole** — Editor tabs, file upload, export button state, character count
+
+All tests are designed to run offline without requiring Docker, Postgres, or Gotenberg.
+
+---
+
 ## Example flow
 
 ```bash

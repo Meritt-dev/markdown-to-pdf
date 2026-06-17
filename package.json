@@ -8,6 +8,10 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:ui": "vitest --ui",
+    "test:coverage": "vitest run --coverage",
     "worker": "tsx scripts/worker.ts",
     "cleanup": "tsx scripts/cleanup.ts"
   },
@@ -36,16 +40,23 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.1",
     "@types/node": "^20",
     "@types/pg": "^8.20.0",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@vitejs/plugin-react": "^6.0.2",
+    "@vitest/ui": "^4.1.9",
     "babel-plugin-react-compiler": "1.0.0",
     "concurrently": "^10.0.3",
     "eslint": "^9",
     "eslint-config-next": "16.2.2",
+    "happy-dom": "^20.10.5",
     "tailwindcss": "^4",
     "tsx": "^4.21.0",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^4.1.9"
   }
 }
